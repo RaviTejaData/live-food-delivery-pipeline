@@ -78,6 +78,12 @@ app = FastAPI(title="Live Food Delivery API", lifespan=lifespan)
 # ---------- Health check ----------
 
 # ---------- Dashboard page ----------
+# ---------- Health check ----------
+@app.get("/api/health")
+def health():
+    return {"status": "ok"}
+
+
 @app.get("/")
 def dashboard():
     return FileResponse("dashboard.html")
