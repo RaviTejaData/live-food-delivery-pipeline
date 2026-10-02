@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Food Delivery</title>
+<style>
+  /* ===== PART 1: STYLING ===== */
+  :root {
+    --bg:#0f1115; --panel:#181b22; --border:#262a33; --text:#e8eaed; --muted:#8b919c;
+    --placed:#6c8cff; --cooking:#f5b942; --on_the_way:#3fc1c9; --delivered:#4cc38a; --cancelled:#ef5b5b;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--text); }
+  header { display:flex; justify-content:space-between; align-items:center; padding:20px 24px; border-bottom:1px solid var(--border); }
+  h1 { font-size:20px; margin:0; }
+  .sub { color:var(--muted); font-size:13px; margin-top:4px; }
+  .live { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); }
+  .dot { width:10px; height:10px; border-radius:50%; background:var(--cancelled); }
+  .dot.on { background:var(--delivered); animation:pulse 1.5s infinite; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(76,195,138,.6)} 100%{box-shadow:0 0 0 10px rgba(76,195,138,0)} }
+  main { padding:24px; max-width:1200px; margin:0 auto; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:24px; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px; }
+  .card.status { border-left:4px solid var(--c); }
+  .label { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  .value { font-size:28px; font-weight:700; margin-top:6px; font-variant-numeric:tabular-nums; }
+  .bump { animation:bump .4s; }
+  @keyframes bump { 50%{transform:scale(1.06)} }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+  .panel h2 { font-size:14px; margin:0; padding:14px 16px; border-bottom:1px solid var(--border); }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th, td { text-align:left; padding:10px 16px; border-bottom:1px solid var(--border); }
+  th { color:var(--muted); font-weight:500; font-size:12px; }
+  .num { text-align:right; font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:600; color:#111; background:var(--c); }
+  tr.flash { animation:flash 1.2s; }
+  @keyframes flash { from{background:rgba(255,122,69,.25)} to{background:transparent} }
+  @media (max-width:600px) { .hide-sm { display:none; } main { padding:16px; } }
+</style>
+</head>
+<body>
+  <!-- ===== PART 2: LAYOUT ===== -->
+  <header>
+    <div>
+      <h1>🛵 Live Food Delivery</h1>
+      <div class="sub">Postgres → Kafka → FastAPI → WebSocket</div>
+    </div>
+    <div class="live"><span id="dot" class="dot"></span><span id="conn">Connecting…</span></div>
+  </header>
+
+  <main>
+    <section class="kpis">
+      <div class="card"><div class="label">Orders today</div><div class="value" id="orders_today">–</div></div>
+      <div class="card"><div class="label">Revenue today</div><div class="value" id="revenue_today">–</div></div>
+      <div class="card status" style="--c:var(--placed)"><div class="label">Placed</div><div class="value" id="count-placed">0</div></div>
+      <div class="card status" style="--c:var(--cooking)"><div class="label">Cooking</div><div class="value" id="count-cooking">0</div></div>
+      <div class="card status" style="--c:var(--on_the_way)"><div class="label">On the way</div><div class="value" id="count-on_the_way">0</div></div>
+      <div class="card status" style="--c:var(--delivered)"><div class="label">Delivered</div><div class="value" id="count-delivered">0</div></div>
+      <div class="card status" style="--c:var(--cancelled)"><div class="label">Cancelled</div><div class="value" id="count-cancelled">0</div></div>
+    </section>
+
+    <section class="panel">
+      <h2>Live order feed</h2>
+      <table>
+        <thead>
+          <tr><th>Time</th><th>Order</th><th>Restaurant</th><th class="hide-sm">City</th><th>Status</th><th class="num">Total</th></tr>
+        </thead>
+        <tbody id="feed"></tbody>
+      </table>
+    </section>
+  </main>
+
+<script>
+  // ===== PART 3: LOGIC =====
+  const STATUSES = ["placed", "cooking", "on_the_way", "delivered", "cancelled"];
+  const LABELS = { placed:"Placed", cooking:"Cooking", on_the_way:"On the way", delivered:"Delivered", cancelled:"Cancelled" };
+  const MAX_ROWS = 20;
+  const gbp = new Intl.NumberFormat("en-GB", { style:"currency", currency:"GBP" });
+
+  const state = { counts:{}, ordersToday:0, revenueToday:0, totals:{} };
+
+  // --- 3a. Update a number on screen (with a little bump animation) ---
+  function setValue(id, text) {
+    const el = document.getElementById(id);
+    if (el.textContent === String(text)) return;
+    el.textContent = text;
+    el.classList.remove("bump"); void el.offsetWidth; el.classList.add("bump");
+  }
+
+  function renderKpis() {
+    setValue("orders_today", state.ordersToday);
+    setValue("revenue_today", gbp.format(state.revenueToday));
+    for (const s of STATUSES) setValue("count-" + s, state.counts[s] || 0);
+  }
+
+  // --- 3b. Add one row to the top of the feed ---
+  function addRow(o, flash) {
+    const tr = document.createElement("tr");
+    if (flash) tr.className = "flash";
+
+    const cells = [new Date(o.time).toLocaleTimeString("en-GB"), "#" + o.order_id, o.restaurant, o.city];
+    cells.forEach((text, i) => {
+      const td = document.createElement("td");
+      td.textContent = text;
+      if (i === 3) td.className = "hide-sm";
+      tr.appendChild(td);
+    });
+
+    const statusTd = document.createElement("td");
+    const pill = document.createElement("span");
+    pill.className = "pill";
+    pill.textContent = LABELS[o.status];
+    pill.style.setProperty("--c", `var(--${o.status})`);
+    statusTd.appendChild(pill);
+    tr.appendChild(statusTd);
+
+    const totalTd = document.createElement("td");
+    totalTd.className = "num";
+    totalTd.textContent = o.total != null ? gbp.format(o.total) : "–";
+    tr.appendChild(totalTd);
+
+    const feed = document.getElementById("feed");
+    feed.prepend(tr);
+    while (feed.children.length > MAX_ROWS) feed.lastChild.remove();
+  }
+
+  // --- 3c. Snapshot: load the current state from the API ---
+  async function loadSnapshot() {
+    const res = await fetch("/api/snapshot");
+    const data = await res.json();
+    state.counts = data.status_counts;
+    state.ordersToday = data.orders_today;
+    state.revenueToday = data.revenue_today;
+    for (const o of data.recent_orders) state.totals[o.order_id] = o.total_amount;
+    renderKpis();
+    return data;
+  }
+
+  // --- 3d. Apply one live event from Kafka ---
+  function handleEvent(e) {
+    if (e.event_type === "order_created") {
+      state.totals[e.order_id] = e.total_amount;
+      state.counts.placed = (state.counts.placed || 0) + 1;
+      state.ordersToday += 1;
+      state.revenueToday += e.total_amount;
+    } else if (e.event_type === "status_changed") {
+      state.counts[e.previous_status] = Math.max(0, (state.counts[e.previous_status] || 0) - 1);
+      state.counts[e.status] = (state.counts[e.status] || 0) + 1;
+      if (e.status === "cancelled") {
+        state.ordersToday = Math.max(0, state.ordersToday - 1);
+        const t = state.totals[e.order_id];
+        if (t != null) state.revenueToday -= t;
+      }
+    }
+    renderKpis();
+    addRow({ time:e.event_time, order_id:e.order_id, restaurant:e.restaurant, city:e.city,
+             status:e.status, total:state.totals[e.order_id] }, true);
+  }
+
+  // --- 3e. WebSocket with automatic reconnect ---
+  function connect() {
+    const dot = document.getElementById("dot");
+    const conn = document.getElementById("conn");
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const ws = new WebSocket(`${proto}://${location.host}/ws/orders`);
+
+    ws.onopen = () => { dot.classList.add("on"); conn.textContent = "Live"; loadSnapshot(); };
+    ws.onmessage = (msg) => handleEvent(JSON.parse(msg.data));
+    ws.onclose = () => {
+      dot.classList.remove("on");
+      conn.textContent = "Reconnecting…";
+      setTimeout(connect, 3000);
+    };
+  }
+
+  // --- 3f. Start everything ---
+  (async function start() {
+    const data = await loadSnapshot();
+    [...data.recent_orders].reverse().forEach(o => addRow({
+      time:o.updated_at, order_id:o.order_id, restaurant:o.restaurant, city:o.city,
+      status:o.status, total:o.total_amount }, false));
+    connect();
+    setInterval(loadSnapshot, 30000);
+  })();
+</script>
+</body>
+</html>
