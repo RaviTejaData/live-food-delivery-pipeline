@@ -1,3 +1,4 @@
+import os
 import asyncio
 import json
 import threading
@@ -8,7 +9,9 @@ from confluent_kafka import Consumer
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 
-DB_DSN = "host=localhost port=5432 dbname=shop user=app password=app"
+DB_HOST = os.getenv("DB_HOST", "localhost")
+KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
+DB_DSN = f"host={DB_HOST} port=5432 dbname=shop user=app password=app"
 
 TOPIC = "order_events"
 
@@ -30,7 +33,7 @@ async def broadcast(message: str):
 # ---------- Kafka consumer (runs in a background thread) ----------
 def kafka_loop(loop, stop_event):
     consumer = Consumer({
-        "bootstrap.servers": "localhost:9092",
+        "bootstrap.servers": KAFKA_BOOTSTRAP,
         "group.id": "dashboard-api",
         "auto.offset.reset": "latest",
     })

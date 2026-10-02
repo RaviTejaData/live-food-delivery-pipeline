@@ -1,3 +1,4 @@
+import os
 import json
 import random
 import time
@@ -6,7 +7,9 @@ import psycopg
 from confluent_kafka import Producer
 
 # ---------- Section 1: settings ----------
-DB_DSN = "host=localhost port=5432 dbname=shop user=app password=app"
+DB_HOST = os.getenv("DB_HOST", "localhost")
+KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
+DB_DSN = f"host={DB_HOST} port=5432 dbname=shop user=app password=app"
 TOPIC = "order_events"
 
 MENU = {
@@ -25,7 +28,7 @@ CANCEL_CHANCE = 0.05
 
 # ---------- Section 2: connections ----------
 conn = psycopg.connect(DB_DSN, autocommit=True)
-producer = Producer({"bootstrap.servers": "localhost:9092"})
+producer = Producer({"bootstrap.servers": KAFKA_BOOTSTRAP})
 
 
 # ---------- Section 3: load reference data ----------
