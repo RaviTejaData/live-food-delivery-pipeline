@@ -1,5 +1,7 @@
 # Live Food Delivery – Real-Time Data Pipeline
 
+**Live demo:** https://live.ravidata.com
+
 Simulated food delivery platform streaming live order events end to end.
 
 **Pipeline:** Python generator → PostgreSQL → Kafka → FastAPI (consumer + WebSocket) → live dashboard
@@ -16,7 +18,7 @@ Open http://localhost:8000
 
 ## Roadmap
 - [x] MVP: live dashboard
-- [ ] Deploy to live.ravidata.com
+- [x] Deploy to live.ravidata.com (Oracle Cloud ARM VM, Docker Compose, Caddy HTTPS)
 - [ ] Debezium CDC (replace dual writes)
 - [ ] Stream processing: windows, late events
 - [ ] Schema registry + dead-letter queue
